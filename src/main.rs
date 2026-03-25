@@ -4,19 +4,20 @@ mod storage;
 mod utils;
 mod index;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 use std::{io};
+use redis::Client;
 
 use crawler::worker::start_workers;
 use index::inverted_index::InvertedIndex;
 use index::graph::LinkGraph;
+use crawler::redis_queue::push_url;
 
 #[tokio::main]
 async fn main() {
-    let queue = Arc::new(Mutex::new(VecDeque::new()));
     let visited = Arc::new(Mutex::new(HashSet::new()));
     let seen = Arc::new(Mutex::new(HashSet::new()));
     let domain_last_access = Arc::new(Mutex::new(HashMap::<String, Instant>::new()));
@@ -27,13 +28,15 @@ async fn main() {
 
     let graph = Arc::new(Mutex::new(LinkGraph::new()));
 
+    let redis_client = Client::open("redis://127.0.0.1/").unwrap();
+
     let seed_url = "https://www.google.com".to_string();
 
-    queue.lock().await.push_back(seed_url.clone());
+    push_url(&redis_client, seed_url.clone()).await;
     seen.lock().await.insert(seed_url);
 
     start_workers(
-        queue,
+        redis_client.clone(),
         visited,
         seen,
         domain_last_access,

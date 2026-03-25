@@ -19,9 +19,9 @@ impl LinkGraph {
     }
   }
 
-  pub fn get_links(&self, url: &String) -> Option<&HashSet<String>> {
-    self.edges.get(url)
-  }
+  // pub fn get_links(&self, url: &String) -> Option<&HashSet<String>> {
+  //   self.edges.get(url)
+  // }
 
   pub fn compute_pagerank(&self, iterations: usize, d: f64) -> HashMap<String, f64> {
     let mut ranks = HashMap::new();

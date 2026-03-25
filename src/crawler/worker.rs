@@ -1,8 +1,9 @@
 use reqwest;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+use redis::Client;
 
 use crate::index::inverted_index::InvertedIndex;
 use crate::index::tokenizer::tokenizer;
@@ -11,9 +12,10 @@ use crate::parser::robots::fetch_robots_txt;
 use crate::storage::file_store::save_page;
 use crate::utils::url_utils::{get_domain, get_path};
 use crate::index::graph::LinkGraph;
+use crate::crawler::redis_queue::{push_url,pop_url};
 
 pub async fn start_workers(
-    queue: Arc<Mutex<VecDeque<String>>>,
+    client: Client,
     visited: Arc<Mutex<HashSet<String>>>,
     seen: Arc<Mutex<HashSet<String>>>,
     domain_last_access: Arc<Mutex<HashMap<String, Instant>>>,
@@ -27,7 +29,7 @@ pub async fn start_workers(
     let mut handles = Vec::new();
 
     for _ in 0..worker_count {
-        let queue = Arc::clone(&queue);
+        let client = client.clone();
         let visited = Arc::clone(&visited);
         let seen = Arc::clone(&seen);
         let domain_last_access = Arc::clone(&domain_last_access);
@@ -40,14 +42,14 @@ pub async fn start_workers(
                 // =========================
                 // 1. Get URL from queue
                 // =========================
-                let url = {
-                    let mut q = queue.lock().await;
-                    q.pop_front()
-                };
+                let url = pop_url(&client).await;
 
                 let url = match url {
                     Some(u) => u,
-                    None => continue,
+                    None => {
+                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        continue;
+                    }
                 };
 
                 // =========================
@@ -184,13 +186,12 @@ pub async fn start_workers(
                 // =========================
                 // 10. Add to queue
                 // =========================
-                let mut q = queue.lock().await;
                 let mut s = seen.lock().await;
 
                 for link in new_links {
                     if !s.contains(&link) {
                         s.insert(link.clone());
-                        q.push_back(link);
+                        push_url(&client, link).await;
                     }
                 }
             }
