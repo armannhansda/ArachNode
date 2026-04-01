@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use redis::Client;
 
-use crate::index::inverted_index::InvertedIndex;
+// use crate::index::inverted_index::InvertedIndex;
+use crate::index::redis_index::{add_document};
 use crate::index::tokenizer::tokenizer;
 use crate::parser::html::{extract_links, extract_text};
 use crate::parser::robots::fetch_robots_txt;
@@ -13,31 +14,32 @@ use crate::storage::file_store::save_page;
 use crate::utils::url_utils::{get_domain, get_path};
 use crate::index::graph::LinkGraph;
 use crate::crawler::redis_queue::{push_url,pop_url};
+use crate::crawler::redis_seen::add_if_not_seen;
+use crate::crawler::redis_visited::{is_visited, mark_visited};
 
 pub async fn start_workers(
     client: Client,
-    visited: Arc<Mutex<HashSet<String>>>,
     seen: Arc<Mutex<HashSet<String>>>,
     domain_last_access: Arc<Mutex<HashMap<String, Instant>>>,
     robots_cache: Arc<Mutex<HashMap<String, Vec<String>>>>,
     crawler_count: Arc<Mutex<usize>>,
-    index: Arc<Mutex<InvertedIndex>>,
     graph: Arc<Mutex<LinkGraph>>,
     max_pages: usize,
     worker_count: usize,
 ) {
     let mut handles = Vec::new();
+    let max_empty_polls = 10;
 
     for _ in 0..worker_count {
         let client = client.clone();
-        let visited = Arc::clone(&visited);
         let seen = Arc::clone(&seen);
         let domain_last_access = Arc::clone(&domain_last_access);
         let robots_cache = Arc::clone(&robots_cache);
         let crawler_count = Arc::clone(&crawler_count);
-        let index = Arc::clone(&index);
         let graph = Arc::clone(&graph);
         let handle = tokio::spawn(async move {
+            let mut empty_polls = 0;
+
             loop {
                 // =========================
                 // 1. Get URL from queue
@@ -45,8 +47,15 @@ pub async fn start_workers(
                 let url = pop_url(&client).await;
 
                 let url = match url {
-                    Some(u) => u,
+                    Some(u) => {
+                        empty_polls = 0;
+                        u
+                    }
                     None => {
+                        empty_polls += 1;
+                        if empty_polls >= max_empty_polls {
+                            break;
+                        }
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
@@ -55,35 +64,31 @@ pub async fn start_workers(
                 // =========================
                 // 2. Check visited
                 // =========================
-                {
-                    let mut v = visited.lock().await;
-                    if v.contains(&url) {
-                        continue;
-                    }
-                    v.insert(url.clone());
+                if is_visited(&client, &url).await {
+                    continue;
                 }
 
-                // =========================
-                // 3. Stop condition
-                // =========================
+                // Stop quickly once we already have enough completed pages.
                 {
-                    let mut count = crawler_count.lock().await;
+                    let count = crawler_count.lock().await;
                     if *count >= max_pages {
                         break;
                     }
-                    *count += 1;
                 }
 
-                println!("Crawling {}", url);
-
                 // =========================
-                // 4. Politeness (rate limit)
+                // 3. Domain validation
                 // =========================
                 let domain = match get_domain(&url) {
                     Some(d) => d,
                     None => continue,
                 };
 
+                println!("Crawling {}", url);
+
+                // =========================
+                // 4. Politeness (rate limit)
+                // =========================
                 let delay = Duration::from_millis(1000);
 
                 loop {
@@ -158,24 +163,36 @@ pub async fn start_workers(
                 };
 
                 // =========================
-                // 7. Indexing (inverted index) 
+                // 7. Reserve a completed-page slot
+                // =========================
+                let page_id = {
+                    let mut count = crawler_count.lock().await;
+                    if *count >= max_pages {
+                        break;
+                    }
+                    *count += 1;
+                    *count
+                };
+
+                mark_visited(&client, &url).await;
+
+                // =========================
+                // 8. Indexing (inverted index)
                 // =========================
                 let text = extract_text(&body);
                 let words = tokenizer(&text);
 
                 {
-                    let mut idx = index.lock().await;
-                    idx.add_document(url.clone(), words);
+                    add_document(&client, &url, words).await;
                 }
 
                 // =========================
-                //  8.Store page
+                // 9. Store page
                 // =========================
-                let len = visited.lock().await.len();
-                save_page(&body, len).await;
+                save_page(&body, page_id).await;
 
                 // =========================
-                // 9. Extract links
+                // 10. Extract links
                 // =========================
                 let new_links = extract_links(&url, &body);
                 {
@@ -184,14 +201,12 @@ pub async fn start_workers(
                 }
 
                 // =========================
-                // 10. Add to queue
+                // 11. Add to queue
                 // =========================
-                let mut s = seen.lock().await;
-
                 for link in new_links {
-                    if !s.contains(&link) {
-                        s.insert(link.clone());
-                        push_url(&client, link).await;
+                    if add_if_not_seen(&client, &link).await {
+                        push_url(&client, link.clone()).await;
+                        seen.lock().await.insert(link);
                     }
                 }
             }
