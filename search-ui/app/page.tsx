@@ -3,13 +3,32 @@
 import { useState } from "react";
 import axios from "axios";
 
+type SearchResult = {
+  url: string;
+  title: string;
+  description: string;
+  score: number;
+};
+
 export default function Home() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<[string, number][]>([]);
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [error, setError] = useState("");
 
   const handleSearch = async () => {
-    const res = await axios.get(`http://localhost:3001/search?q=${query}`);
-    setResults(res.data);
+    try {
+      setError("");
+      const res = await axios.get(`http://localhost:3001/search?q=${query}`);
+      setResults(res.data);
+    } catch (err) {
+      const message =
+        axios.isAxiosError(err) && err.response?.data?.details
+          ? err.response.data.details
+          : "Search failed";
+
+      setResults([]);
+      setError(message);
+    }
   };
 
   return (
@@ -29,12 +48,15 @@ export default function Home() {
       </button>
 
       <div style={{ marginTop: "30px" }}>
-        {results.map(([url, score], i) => (
-          <div key={i} style={{ marginBottom: "10px" }}>
-            <a href={url} target="_blank">
-              {url}
+        {error ? <p style={{ color: "red" }}>{error}</p> : null}
+        {results.map((result, i) => (
+          <div key={i} style={{ marginBottom: "20px" }}>
+            <a href={result.url} target="_blank" rel="noreferrer">
+              {result.title || result.url}
             </a>
-            <p>Score: {score.toFixed(3)}</p>
+            <p style={{ margin: "6px 0" }}>{result.url}</p>
+            <p style={{ margin: "6px 0" }}>{result.description}</p>
+            <p>Score: {result.score.toFixed(3)}</p>
           </div>
         ))}
       </div>

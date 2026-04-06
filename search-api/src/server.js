@@ -1,55 +1,93 @@
 const express = require("express");
-const redis = require("redis")
 const cors = require("cors");
 
-const PORT = 3001;
+const { getPagesCollection } = require("../utils/mongoDB");
+
+const PORT = process.env.PORT || 3001;
 const app = express();
+
 app.use(cors());
+app.use(express.json());
 
-const client = redis.createClient();
-client.connect();
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
+function countMatches(text, word) {
+  if (!text) {
+    return 0;
+  }
 
-app.get("/search", async (req, res) =>{
-  const query = req.query.q;
+  const matches = text.match(new RegExp(escapeRegex(word), "gi"));
+  return matches ? matches.length : 0;
+}
 
-  if(!query) {
+function scorePage(page, words) {
+  return words.reduce((score, word) => {
+    const titleMatches = countMatches(page.title, word);
+    const descriptionMatches = countMatches(page.description, word);
+    const contentMatches = countMatches(page.content, word);
+
+    return score + titleMatches * 5 + descriptionMatches * 3 + contentMatches;
+  }, 0);
+}
+
+app.get("/search", async (req, res) => {
+  const query = req.query.q?.trim();
+
+  if (!query) {
     return res.json([]);
   }
 
-  const words = query.toLowerCase().trim().split(/\s+/);
-  let scores = {};
+  try {
+    const pages = await getPagesCollection();
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
 
-  const totalDocs = parseFloat(await client.get("total_docs")) || 1;
+    const filters = words.map((word) => ({
+      $or: [
+        { title: { $regex: escapeRegex(word), $options: "i" } },
+        { description: { $regex: escapeRegex(word), $options: "i" } },
+        { content: { $regex: escapeRegex(word), $options: "i" } },
+      ],
+    }));
 
-  for (const word of words) {
-    const key = `index: ${word}`;
-    const docs = await client.hGetAll(key);
+    const matches = await pages
+      .find({ $and: filters })
+      .project({ _id: 0, url: 1, title: 1, description: 1, content: 1 })
+      .limit(100)
+      .toArray();
 
-    const df = Object.keys(docs).length;
-    const idf = Math.log(totalDocs / (1+df));
+    const results = matches
+      .map((page) => ({
+        url: page.url,
+        title: page.title,
+        description: page.description,
+        score: scorePage(page, words),
+      }))
+      .filter((page) => page.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20);
 
-
-    for (const url in docs) {
-      const tf = parseFloat(docs[url]);
-
-      if (!scores[url]) scores[url] = 0;
-
-      scores[url] += tf*idf;
-    }
+    res.json(results);
+  } catch (error) {
+    console.error("Search failed:", error);
+    res.status(500).json({
+      error: "Failed to search pages",
+      details: error.message,
+    });
   }
+});
 
-  let results = Object.entries(scores);
-
-  results.sort((a,b) => b[1] - a[1]);
-
-  res.json(results.slice(0, 20));
-})
-
-app.get("/", (req, res) => {
-  res.send("hello server running")
-} )
+app.get("/", async (_req, res) => {
+  try {
+    await getPagesCollection();
+    res.send("search api running");
+  } catch (error) {
+    console.error("MongoDB connection failed:", error);
+    res.status(500).send("search api failed to connect to mongodb");
+  }
+});
 
 app.listen(PORT, () => {
-  console.log(`server running on http://localhost:${PORT}`)
-})
+  console.log(`server running on http://localhost:${PORT}`);
+});

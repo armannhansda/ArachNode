@@ -17,6 +17,7 @@ use index::graph::LinkGraph;
 use crawler::redis_queue::push_url;
 use std::env;
 use index::redis_index::search;
+use storage::mongo_db::MongoDB;
 
 #[tokio::main]
 async fn main() {
@@ -31,6 +32,8 @@ async fn main() {
 
     let redis_client = Client::open("redis://127.0.0.1/").unwrap();
 
+    let mongo = Arc::new(MongoDB::init().await);
+
     let seed_url = env::var("SEED_URL")
         .unwrap_or_else(|_| "https://doc.rust-lang.org/book/".to_string());
 
@@ -44,6 +47,7 @@ async fn main() {
         robots_cache,
         crawler_count,
         graph.clone(),
+        mongo.clone(),
         100, // max pages
         50,   // workers
     ).await;

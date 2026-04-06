@@ -1,21 +1,22 @@
+use redis::Client;
 use reqwest;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
-use redis::Client;
 
 // use crate::index::inverted_index::InvertedIndex;
-use crate::index::redis_index::{add_document};
-use crate::index::tokenizer::tokenizer;
-use crate::parser::html::{extract_links, extract_text};
-use crate::parser::robots::fetch_robots_txt;
-use crate::storage::file_store::save_page;
-use crate::utils::url_utils::{get_domain, get_path};
-use crate::index::graph::LinkGraph;
-use crate::crawler::redis_queue::{push_url,pop_url};
+use crate::crawler::redis_queue::{pop_url, push_url};
 use crate::crawler::redis_seen::add_if_not_seen;
 use crate::crawler::redis_visited::{is_visited, mark_visited};
+use crate::index::graph::LinkGraph;
+use crate::index::redis_index::add_document;
+use crate::index::tokenizer::tokenizer;
+use crate::parser::html::{extract_links, extract_metadata, extract_text};
+use crate::parser::robots::fetch_robots_txt;
+use crate::storage::file_store::save_page;
+use crate::storage::mongo_db::{MongoDB, Page};
+use crate::utils::url_utils::{get_domain, get_path};
 
 pub async fn start_workers(
     client: Client,
@@ -24,6 +25,7 @@ pub async fn start_workers(
     robots_cache: Arc<Mutex<HashMap<String, Vec<String>>>>,
     crawler_count: Arc<Mutex<usize>>,
     graph: Arc<Mutex<LinkGraph>>,
+    mongo: Arc<MongoDB>,
     max_pages: usize,
     worker_count: usize,
 ) {
@@ -37,6 +39,8 @@ pub async fn start_workers(
         let robots_cache = Arc::clone(&robots_cache);
         let crawler_count = Arc::clone(&crawler_count);
         let graph = Arc::clone(&graph);
+        let mongo = Arc::clone(&mongo);
+
         let handle = tokio::spawn(async move {
             let mut empty_polls = 0;
 
@@ -125,9 +129,9 @@ pub async fn start_workers(
                     cache.get(&domain).cloned().unwrap_or_default()
                 };
 
-                let blocked = disallowed_paths.iter().any(|rule| {
-                    !rule.is_empty() && path.starts_with(rule)
-                });
+                let blocked = disallowed_paths
+                    .iter()
+                    .any(|rule| !rule.is_empty() && path.starts_with(rule));
 
                 if blocked {
                     println!("Blocked by robots.txt: {}", url);
@@ -161,6 +165,22 @@ pub async fn start_workers(
                     Some(b) => b,
                     None => continue,
                 };
+
+
+                // ==================
+                //  store in mongoDB
+                // ==================
+                let text = extract_text(&body);
+                let (title, description) = extract_metadata(&body);
+
+                mongo
+                    .insert_page(Page {
+                        url: url.clone(),
+                        title,
+                        description,
+                        content: text.clone(),
+                    })
+                    .await;
 
                 // =========================
                 // 7. Reserve a completed-page slot

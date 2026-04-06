@@ -50,3 +50,24 @@ pub fn extract_text(body: &str) -> String {
     let document = Html::parse_document(body);
     document.root_element().text().collect::<Vec<_>>().join(" ")
 }
+
+pub fn extract_metadata(body: &str) -> (String, String) {
+    let document = Html::parse_document(body);
+
+    let title_selector = Selector::parse("title").unwrap();
+    let title = document 
+        .select(&title_selector)
+        .next()
+        .map(|t| t.inner_html())
+        .unwrap_or_default();
+
+    let meta_selector = Selector::parse("meta[name=\"description\"]").unwrap();
+    let description = document
+        .select(&meta_selector)
+        .next()
+        .and_then(|m| m.value().attr("content"))
+        .unwrap_or("")
+        .to_string();
+
+    (title, description)
+}
