@@ -1,0 +1,334 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import axios from "axios";
+
+type SearchResult = {
+  url: string;
+  title: string;
+  description: string;
+  score: number;
+};
+
+export default function Home() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [suggetions, setSuggetions] = useState<string[]>([]);
+  const [showSuggetions, setShowSuggetions] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [lastQuery, setLastQuery] = useState("");
+
+  const observerRef = useRef<HTMLDivElement | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryRef = useRef(query);
+  const loadingRef = useRef(false);
+  const requestIdRef = useRef(0);
+
+  useEffect(() => {
+    queryRef.current = query;
+  }, [query]);
+
+  useEffect(() => {
+    loadingRef.current = loading;
+  }, [loading]);
+
+  const resetSearchState = () => {
+    setResults([]);
+    setPage(1);
+    setHasMore(true);
+    setError("");
+  };
+
+  const fetchResults = async (
+    searchTerm = queryRef.current.trim(),
+    newPage = 1,
+    reset = false
+  ) => {
+    const trimmedQuery = searchTerm.trim();
+
+    if (!trimmedQuery || loadingRef.current) {
+      return;
+    }
+
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
+
+    try {
+      setLoading(true);
+      setError("");
+
+      const response = await axios.get("http://localhost:3001/search", {
+        params: {
+          q: trimmedQuery,
+          page: newPage,
+          limit: 10,
+        },
+      });
+
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+
+      const data = response.data;
+
+      setResults((prev) => (reset ? data.results : [...prev, ...data.results]));
+      setHasMore(Boolean(data.hasMore));
+      setPage(newPage);
+    } catch {
+      setError("Search failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() =>{
+    if(!query.trim()) {
+      setSuggetions([]);
+      setShowSuggetions(false);
+      return;
+    }
+
+    const timeout = setTimeout(async () => {
+      try {
+        const res = await axios.get("http://localhost:3001/suggetion", {
+          params: {q: query},
+        });
+
+        setSuggetions(res.data || []);
+        setShowSuggetions(true);
+        
+      } catch {
+        setSuggetions([]);  
+      }
+    }, 300);
+
+    return () => clearTimeout(timeout);
+
+  }, [query])
+
+  useEffect(() => {
+    if (!query.trim()) {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+      return;
+    }
+
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = setTimeout(() => {
+      const trimmedQuery = query.trim();
+
+      setLastQuery(trimmedQuery);
+      setHasSearched(true);
+      resetSearchState();
+      void fetchResults(trimmedQuery, 1, true);
+    }, 1000);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
+  }, [query]);
+
+  const handleSearch = () => {
+    const trimmedQuery = query.trim();
+
+    if (!trimmedQuery) {
+      setSuggetions([]);
+      setShowSuggetions(false);
+      return;
+    }
+
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    setLastQuery(trimmedQuery);
+    setHasSearched(true);
+    resetSearchState();
+    void fetchResults(trimmedQuery, 1, true);
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      if(activeIndex >= 0){
+        setQuery(suggetions[activeIndex]);
+        setShowSuggetions(false);
+      }
+      handleSearch();
+    }
+
+    if(event.key === "ArrowDown") {
+      setActiveIndex((prev) =>
+        prev < suggetions.length - 1? prev+1: prev
+      );
+    }
+
+    if(event.key === "ArrowUp") {
+      setActiveIndex((prev) => (prev > 0 ? prev -1 : -1));
+    }
+  };
+
+  useEffect(() => {
+    const target = observerRef.current;
+
+    if (!target || !hasMore) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !loadingRef.current) {
+          void fetchResults(lastQuery, page + 1);
+        }
+      },
+      { threshold: 1 }
+    );
+
+    observer.observe(target);
+
+    return () => observer.disconnect();
+  }, [page, hasMore, loading, lastQuery]);
+
+  return (
+    <div className="min-h-screen bg-white text-gray-800">
+      {hasSearched && (
+        <div className="sticky top-0 z-10 flex items-center gap-4 border-b bg-white px-6 py-4">
+          <h1 className="text-xl font-semibold text-blue-600">ArachNode</h1>
+          <div className="relative flex-1">   
+            <input
+              value={query}
+              onChange={(event) => {
+                setQuery(event.target.value)
+                setActiveIndex(-1);
+              }}
+              onKeyDown={handleKeyDown}
+              onFocus={() => suggetions.length && setShowSuggetions(true)}
+              onBlur={() => setTimeout(() => setShowSuggetions(false), 150)}
+              placeholder="Search..."
+              className="flex-1 rounded-full border px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+
+            {showSuggetions && suggetions.length > 0 && (
+              <div className ="absolute top-full mt-2 w-full rounded-xl border bg-white shadow-lg z-20">
+                {suggetions.map((item, index) =>(
+                  <div
+                    key={index}
+                    onMouseDown={()=>{
+                      setQuery(item);
+                      setShowSuggetions(false);
+                      handleSearch();
+                    }}
+                    className={`px-4 py-2 cursor-pointer ${
+                      index === activeIndex
+                        ?"bg-blue-100"
+                        : "hover:bg-gray-100"
+                    }`}
+                  >
+                    {item}
+
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleSearch}
+            className="rounded-full bg-blue-600 px-5 py-2 text-white transition hover:bg-blue-700"
+          >
+            Search
+          </button>
+        </div>
+      )}
+
+      {hasSearched && !loading && !error && (
+        <div className="ml-3 mt-3">
+          <p className="text-sm text-gray-500">Showing {results.length} results</p>
+        </div>
+      )}
+
+      {!hasSearched && (
+        <div className="flex h-screen -mt-20 flex-col items-center justify-center">
+          <h1 className="text-5xl font-bold text-blue-600">ArachNode</h1>
+
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Search the web..."
+            className="mt-6 w-[420px] rounded-full border px-5 py-3 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+
+          <button
+            onClick={handleSearch}
+            className="mt-6 rounded-full bg-blue-600 px-6 py-2 text-white transition hover:bg-blue-700"
+          >
+            Search
+          </button>
+        </div>
+      )}
+
+      <div className="mx-3 mt-5 max-w-2xl px-4">
+        {loading && results.length === 0 && (
+          <p className="animate-pulse text-gray-500">Searching...</p>
+        )}
+
+        {error && <p className="text-red-500">{error}</p>}
+
+        {!loading && !error && hasSearched && results.length === 0 && (
+          <p className="text-gray-500">No results found.</p>
+        )}
+
+        <div className="space-y-6">
+          {results.map((result) => (
+            <div key={result.url}>
+              <img
+                src={`https://www.google.com/s2/favicons?domain=${result.url}`}
+                alt=""
+                className="mr-2 inline"
+              />
+              <a
+                href={result.url}
+                target="_blank"
+                rel="noreferrer"
+                className="text-lg text-blue-700 hover:underline"
+              >
+                {result.title || result.url}
+              </a>
+
+              <p className="truncate text-sm text-green-700">{result.url}</p>
+
+              <p className="mt-1 text-sm leading-relaxed text-gray-600">
+                {result.description}
+              </p>
+
+              <p className="mt-1 text-xs text-gray-400">
+                Score: {result.score.toFixed(3)}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {hasMore && (
+          <div ref={observerRef} className="flex h-10 items-center justify-center">
+            {loading && <p className="text-gray-500">Loading more...</p>}
+          </div>
+        )}
+
+        {!hasMore && results.length > 0 && (
+          <p className="mt-6 text-center text-gray-400">No more results</p>
+        )}
+      </div>
+    </div>
+  );
+}

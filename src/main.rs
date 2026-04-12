@@ -1,22 +1,22 @@
 mod crawler;
+mod index;
 mod parser;
 mod storage;
 mod utils;
-mod index;
 
+use redis::Client;
 use std::collections::{HashMap, HashSet};
+use std::io;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
-use std::{io};
-use redis::Client;
 
 use crawler::worker::start_workers;
 // use index::inverted_index::InvertedIndex;
-use index::graph::LinkGraph;
 use crawler::redis_queue::push_url;
-use std::env;
+use index::graph::LinkGraph;
 use index::redis_index::search;
+use std::env;
 use storage::mongo_db::MongoDB;
 
 #[tokio::main]
@@ -34,11 +34,22 @@ async fn main() {
 
     let mongo = Arc::new(MongoDB::init().await);
 
-    let seed_url = env::var("SEED_URL")
-        .unwrap_or_else(|_| "https://doc.rust-lang.org/book/".to_string());
+    let seed_urls = match env::var("SEED_URL") {
+        Ok(url) => vec![url],
+        Err(_) => vec![
+            "https://www.wikipedia.org".to_string(),
+            "https://news.ycombinator.com".to_string(),
+            "https://github.com".to_string(),
+            "https://www.bbc.com".to_string(),
+            "https://developer.mozilla.org".to_string(),
+        ],
+    };
 
-    push_url(&redis_client, seed_url.clone()).await;
-    seen.lock().await.insert(seed_url);
+    for seed_url in seed_urls {
+        push_url(&redis_client, seed_url.clone()).await;
+        seen.lock().await.insert(seed_url);
+    }
+
 
     start_workers(
         redis_client.clone(),
@@ -48,19 +59,19 @@ async fn main() {
         crawler_count,
         graph.clone(),
         mongo.clone(),
-        100, // max pages
-        50,   // workers
-    ).await;
+        1000, // max pages
+        50,  // workers
+    )
+    .await;
 
     let g = graph.lock().await;
     let pagerank = g.compute_pagerank(20, 0.85);
-
 
     println!("Enter search query:");
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
 
-    let mut  results = search(&redis_client, input.trim()).await;
+    let mut results = search(&redis_client, input.trim()).await;
 
     for (url, score) in results.iter_mut() {
         if let Some(pr) = pagerank.get(url) {

@@ -34,9 +34,17 @@ function scorePage(page, words) {
 
 app.get("/search", async (req, res) => {
   const query = req.query.q?.trim();
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const startTime = Date.now();
 
   if (!query) {
-    return res.json([]);
+    return res.json({
+      results: [],
+      page: 1,
+      totalPages: 0,
+      totalResults: 0,
+    });
   }
 
   try {
@@ -51,13 +59,15 @@ app.get("/search", async (req, res) => {
       ],
     }));
 
+    // Step 1: Fetch larger pool (important for scoring accuracy)
     const matches = await pages
       .find({ $and: filters })
       .project({ _id: 0, url: 1, title: 1, description: 1, content: 1 })
-      .limit(100)
+      .limit(500) // bigger pool improves ranking
       .toArray();
 
-    const results = matches
+    // Step 2: Score + Sort
+    const scoredResults = matches
       .map((page) => ({
         url: page.url,
         title: page.title,
@@ -65,10 +75,28 @@ app.get("/search", async (req, res) => {
         score: scorePage(page, words),
       }))
       .filter((page) => page.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 20);
+      .sort((a, b) => b.score - a.score);
 
-    res.json(results);
+    const totalResults = scoredResults.length;
+    const totalPages = Math.ceil(totalResults / limit);
+
+    // Step 3: Paginate AFTER sorting
+    const start = (page - 1) * limit;
+    const paginatedResults = scoredResults.slice(start, start + limit);
+
+    const hasMore = page < totalPages;
+
+    // time taken
+    const timeTaken = Date.now() - startTime;
+
+    res.json({
+      results: paginatedResults,
+      page,
+      totalPages,
+      totalResults,
+      hasMore,
+      timeTaken,
+    });
   } catch (error) {
     console.error("Search failed:", error);
     res.status(500).json({
@@ -77,6 +105,33 @@ app.get("/search", async (req, res) => {
     });
   }
 });
+
+app.get("/suggetion", async (req, res) =>{
+  const query = req.query.q?.trim();
+
+  if(!query) return res.json([]);
+
+  try {
+    
+    const pages = await getPagesCollection();
+
+    const suggetions = await pages
+      .find(
+        {title: {$regex:query, $options: "i"}},
+        {projection: {title: 1, _id:0}}
+      )
+      .limit(5)
+      .toArray()
+    
+    const titles = suggetions.map((s) => s.title);
+
+    res.json(titles);
+  } catch (error) {
+    res.status(500).json([]);
+  }
+});
+
+
 
 app.get("/", async (_req, res) => {
   try {
