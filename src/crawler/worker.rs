@@ -72,7 +72,7 @@ pub async fn start_workers(
                     continue;
                 }
 
-                // Stop quickly once we already have enough completed pages.
+                // Stop quickly once we already have enough completed pages. (dissable this if want continuous crawling)
                 {
                     let count = crawler_count.lock().await;
                     if *count >= max_pages {
@@ -183,7 +183,7 @@ pub async fn start_workers(
                     .await;
 
                 // =========================
-                // 7. Reserve a completed-page slot
+                // 7. Reserve a completed-page slot (dissable this if want continuous crawling)
                 // =========================
                 let page_id = {
                     let mut count = crawler_count.lock().await;
