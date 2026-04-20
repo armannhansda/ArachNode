@@ -12,7 +12,7 @@ type ResultsListProps = {
 export default function ResultsList({ results }: ResultsListProps) {
   return (
     <div className="space-y-7">
-      {results.map((r: any) => (
+      {results.map((r) => (
         <div key={r.url} className="max-w-[690px]">
           <div className="min-w-0">
             <div className="mb-1 flex min-w-0 items-center gap-3">
