@@ -166,7 +166,6 @@ pub async fn start_workers(
                     None => continue,
                 };
 
-
                 // ==================
                 //  store in mongoDB
                 // ==================

@@ -1,13 +1,17 @@
 const express = require("express");
 const cors = require("cors");
 
-const { getPagesCollection } = require("../utils/mongoDB");
+const { DB_NAME, MONGODB_URI, getPagesCollection } = require("../utils/mongoDB");
 
 const PORT = process.env.PORT || 3001;
 const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+function redactMongoUri(uri) {
+  return uri.replace(/\/\/([^:@/]+):([^@/]+)@/, "//$1:***@");
+}
 
 function escapeRegex(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -136,10 +140,17 @@ app.get("/suggetion", async (req, res) =>{
 app.get("/", async (_req, res) => {
   try {
     await getPagesCollection();
-    res.send("search api running");
+    res.send(`search api running with MongoDB database "${DB_NAME}"`);
   } catch (error) {
-    console.error("MongoDB connection failed:", error);
-    res.status(500).send("search api failed to connect to mongodb");
+    const mongoUri = redactMongoUri(MONGODB_URI);
+    const message = `${error.message} Expected MongoDB database: "${DB_NAME}".`;
+
+    console.error("MongoDB connection failed:", message);
+    res.status(500).json({
+      error: "search api failed to connect to mongodb",
+      details: message,
+      mongoUri,
+    });
   }
 });
 

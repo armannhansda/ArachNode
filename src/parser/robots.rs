@@ -11,10 +11,10 @@ pub async fn fetch_robots_txt(domain: &str) -> Vec<String> {
 
                     if line.starts_with("User-agent: *") {
                         allowed = true;
-                    }else if line.starts_with("User-agent:") {
+                    } else if line.starts_with("User-agent:") {
                         allowed = false;
                     }
-                    if allowed && line.starts_with("Disallow:"){
+                    if allowed && line.starts_with("Disallow:") {
                         let path = line.replace("Disallow:", "").trim().to_string();
                         rules.push(path);
                     }

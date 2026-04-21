@@ -1,5 +1,6 @@
 use mongodb::{Client, Collection, bson::doc, options::ClientOptions};
 use serde::{Deserialize, Serialize};
+use std::env;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Page {
@@ -15,12 +16,17 @@ pub struct MongoDB {
 
 impl MongoDB {
     pub async fn init() -> Self {
-        let options = ClientOptions::parse("mongodb://localhost:27017")
+        let mongo_uri =
+            env::var("MONGODB_URI").unwrap_or_else(|_| "mongodb://127.0.0.1:27017".to_string());
+        let mongo_db_name =
+            env::var("MONGODB_DB_NAME").unwrap_or_else(|_| "search_engine".to_string());
+
+        let options = ClientOptions::parse(&mongo_uri)
             .await
-            .unwrap();
+            .unwrap_or_else(|error| panic!("failed to parse MONGODB_URI ({mongo_uri}): {error}"));
         let client = Client::with_options(options).unwrap();
 
-        let db = client.database("search_engine");
+        let db = client.database(&mongo_db_name);
         let collection = db.collection::<Page>("pages");
 
         MongoDB { collection }
