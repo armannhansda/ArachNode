@@ -50,7 +50,6 @@ async fn main() {
         seen.lock().await.insert(seed_url);
     }
 
-
     start_workers(
         redis_client.clone(),
         seen,
@@ -60,7 +59,7 @@ async fn main() {
         graph.clone(),
         mongo.clone(),
         1000, // max pages
-        50,  // workers
+        50,   // workers
     )
     .await;
 

@@ -55,7 +55,7 @@ pub fn extract_metadata(body: &str) -> (String, String) {
     let document = Html::parse_document(body);
 
     let title_selector = Selector::parse("title").unwrap();
-    let title = document 
+    let title = document
         .select(&title_selector)
         .next()
         .map(|t| t.inner_html())

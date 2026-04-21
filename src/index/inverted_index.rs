@@ -1,6 +1,5 @@
 // use std::collections::HashMap;
 
-
 // pub struct InvertedIndex {
 //   //word -> {url -> count}
 //   pub map: HashMap<String, HashMap<String, usize>>,
