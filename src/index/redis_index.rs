@@ -1,8 +1,18 @@
-use redis::AsyncCommands;
+use redis::{AsyncCommands, RedisResult};
 use std::collections::HashMap;
 
 pub async fn add_document(client: &redis::Client, url: &str, words: Vec<String>) {
-    let mut con = client.get_multiplexed_async_connection().await.unwrap();
+    if let Err(error) = add_document_inner(client, url, words).await {
+        eprintln!("failed to add document to Redis index for {url}: {error}");
+    }
+}
+
+async fn add_document_inner(
+    client: &redis::Client,
+    url: &str,
+    words: Vec<String>,
+) -> RedisResult<()> {
+    let mut con = client.get_multiplexed_async_connection().await?;
 
     let mut word_counts: HashMap<String, usize> = HashMap::new();
 
@@ -12,20 +22,28 @@ pub async fn add_document(client: &redis::Client, url: &str, words: Vec<String>)
     }
 
     //store the word counts in Redis
+    let mut pipe = redis::pipe();
+    pipe.atomic();
+
     for (word, count) in word_counts {
-        let _: () = con
-            .hincr(format!("index: {}", word), url, count as i32)
-            .await
-            .unwrap();
+        pipe.hincr(format!("index: {}", word), url, count as i32);
     }
 
     // track total document
+    pipe.incr("total_docs", 1);
+    pipe.query_async::<()>(&mut con).await?;
 
-    let _: () = con.incr("total_docs", 1).await.unwrap();
+    Ok(())
 }
 
 pub async fn search(client: &redis::Client, query: &str) -> Vec<(String, f64)> {
-    let mut con = client.get_multiplexed_async_connection().await.unwrap();
+    let mut con = match client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(error) => {
+            eprintln!("failed to connect to Redis for search: {error}");
+            return Vec::new();
+        }
+    };
 
     let total_docs: f64 = con.get("total_docs").await.unwrap_or(1.0);
 
@@ -45,7 +63,7 @@ pub async fn search(client: &redis::Client, query: &str) -> Vec<(String, f64)> {
     }
 
     let mut results: Vec<(String, f64)> = scores.into_iter().collect();
-    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+    results.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
     results
 }

@@ -38,7 +38,7 @@ export default function Home() {
                   <span className="text-[#ea4335]">Node</span>
                 </h1>
 
-                <div className="w-full max-w-[690px]">
+                <div className="w-full max-w-[690px] flex justify-center items-center">
                   <SearchBar
                     query={query}
                     setQuery={setQuery}

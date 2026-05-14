@@ -1,5 +1,11 @@
 const express = require("express");
 const cors = require("cors");
+const dotenv = require("dotenv");
+
+dotenv.config({
+  debug: true,
+  path:['.env', '.env.local', '.env.development', '.env.production'],
+});
 
 const { DB_NAME, MONGODB_URI, getPagesCollection } = require("../utils/mongoDB");
 

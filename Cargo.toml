@@ -11,3 +11,4 @@ scraper = "0.26.0"
 url = "2"
 mongodb = "3.5.2"
 serde = {version = "1", features = ["derive"]}
+dotenv = "0.15.0"

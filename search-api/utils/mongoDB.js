@@ -1,6 +1,6 @@
 const { MongoClient } = require("mongodb");
 
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://127.0.0.1:27017";
+const MONGODB_URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.MONGODB_DB_NAME || "search_engine";
 const COLLECTION_NAME = "pages";
 const CONNECTION_TIMEOUT_MS = 3000;
@@ -19,6 +19,10 @@ function isConnectionRefused(error) {
 async function getPagesCollection() {
   if (collection) {
     return collection;
+  }
+
+  if (!MONGODB_URI) {
+    throw new Error("MONGODB_URI must be set to your MongoDB Atlas connection string.");
   }
 
   client = new MongoClient(MONGODB_URI, {

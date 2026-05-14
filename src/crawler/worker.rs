@@ -1,5 +1,5 @@
 use redis::Client;
-use reqwest;
+use reqwest::Client as HttpClient;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,9 +31,11 @@ pub async fn start_workers(
 ) {
     let mut handles = Vec::new();
     let max_empty_polls = 10;
+    let http_client = HttpClient::new();
 
     for _ in 0..worker_count {
         let client = client.clone();
+        let http_client = http_client.clone();
         let seen = Arc::clone(&seen);
         let domain_last_access = Arc::clone(&domain_last_access);
         let robots_cache = Arc::clone(&robots_cache);
@@ -150,7 +152,7 @@ pub async fn start_workers(
                         break None;
                     }
 
-                    match reqwest::get(&url).await {
+                    match http_client.get(&url).send().await {
                         Ok(resp) => match resp.text().await {
                             Ok(text) => break Some(text),
                             Err(_) => {}
@@ -172,7 +174,7 @@ pub async fn start_workers(
                 let text = extract_text(&body);
                 let (title, description) = extract_metadata(&body);
 
-                mongo
+                let inserted = mongo
                     .insert_page(Page {
                         url: url.clone(),
                         title,
@@ -181,8 +183,12 @@ pub async fn start_workers(
                     })
                     .await;
 
+                if !inserted {
+                    continue;
+                }
+
                 // =========================
-                // 7. Reserve a completed-page slot (dissable this if want continuous crawling)
+                // 7. Reserve a completed-page slot after MongoDB accepts the page.
                 // =========================
                 let page_id = {
                     let mut count = crawler_count.lock().await;
@@ -236,6 +242,8 @@ pub async fn start_workers(
 
     // wait for all workers
     for handle in handles {
-        handle.await.unwrap();
+        if let Err(error) = handle.await {
+            eprintln!("crawler worker failed: {error}");
+        }
     }
 }
